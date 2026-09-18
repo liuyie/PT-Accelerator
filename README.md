@@ -33,6 +33,7 @@ docker run -d \
   -v /path/to/config:/app/config \
   -v /path/to/logs:/app/logs \
   -e TZ=Asia/Shanghai \
+  -e APP_PORT=23333 \
   eternalcurse/pt-accelerator:latest
 ```
 
@@ -46,12 +47,15 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - TZ=Asia/Shanghai
+      TZ: "${TZ:-Asia/Shanghai}"
+      APP_PORT: "${APP_PORT:-23333}"
     volumes:
       - /etc/hosts:/etc/hosts
       - ./config:/app/config
       - ./logs:/app/logs
 ```
+
+如需自定义时区或端口，可复制 `.env.example` 为 `.env` 后修改对应变量。
 
 创建上述`docker-compose.yml`文件后，在同一目录下运行：
 
@@ -71,6 +75,8 @@ pip install -r requirements.txt
 
 # 启动服务
 bash start.sh
+# 自定义端口启动
+APP_PORT=8080 bash start.sh
 # 或
 python -m uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT:-23333}
 ```
