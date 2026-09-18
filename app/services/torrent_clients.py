@@ -4,9 +4,7 @@ import json
 import time
 from typing import List, Dict, Any, Optional, Union
 import traceback
-
 logger = logging.getLogger(__name__)
-
 class TorrentClientBase:
     """下载器客户端基类"""
     def __init__(self, host: str, port: int, username: str, password: str, use_https: bool = False):
@@ -26,8 +24,6 @@ class TorrentClientBase:
     def get_trackers(self) -> List[str]:
         """获取所有种子的Tracker列表"""
         raise NotImplementedError("子类必须实现此方法")
-
-
 class QBittorrentClient(TorrentClientBase):
     """qBittorrent客户端 - 使用直接API调用，自动检测SID cookie"""
     def __init__(self, host: str, port: int, username: str, password: str, use_https: bool = False):
@@ -45,7 +41,15 @@ class QBittorrentClient(TorrentClientBase):
             data = {"username": self.username, "password": self.password}
             response = self.session.post(login_url, data=data, timeout=10)
             logger.debug(f"登录响应: 状态码={response.status_code}, 内容='{response.text}', cookie={self.session.cookies}")
-            sid = self.session.cookies.get('SID')
+            # 兼容新版 qBittorrent：cookie 不再固定叫 SID，而是 QBT_SID_xxxx
+            sid = None
+            for cookie_name, cookie_value in self.session.cookies.items():
+                if cookie_name.startswith("QBT_SID_"):
+                    sid = cookie_value
+                    break
+            # 保留旧版本兼容，旧版还是 SID
+            if sid is None:
+                sid = self.session.cookies.get('SID')
             logger.debug(f"登录后SID: {sid}")
             if response.status_code == 200 and response.text.lower().startswith('ok') and sid:
                 logger.info(f"qBittorrent登录成功，SID={sid}")
@@ -64,13 +68,25 @@ class QBittorrentClient(TorrentClientBase):
         try:
             logger.info(f"测试qBittorrent连接: {self.host}:{self.port}")
             if not self.login():
-                sid = self.session.cookies.get('SID')
+                sid = None
+                for cookie_name, cookie_value in self.session.cookies.items():
+                    if cookie_name.startswith("QBT_SID_"):
+                        sid = cookie_value
+                        break
+                if sid is None:
+                    sid = self.session.cookies.get('SID')
                 logger.error(f"登录失败后SID: {sid}")
                 return {
                     "success": False,
                     "message": "登录失败，请检查主机地址、端口、用户名和密码"
                 }
-            sid = self.session.cookies.get('SID')
+            sid = None
+            for cookie_name, cookie_value in self.session.cookies.items():
+                if cookie_name.startswith("QBT_SID_"):
+                    sid = cookie_value
+                    break
+            if sid is None:
+                sid = self.session.cookies.get('SID')
             logger.info(f"登录成功后SID: {sid}")
             version_url = f"{self.api_url}/app/version"
             logger.debug(f"获取qBittorrent版本信息: {version_url}, 当前cookie: {self.session.cookies}")
@@ -123,10 +139,22 @@ class QBittorrentClient(TorrentClientBase):
         """获取所有种子的Tracker列表，登录后强制检查SID并打印cookie"""
         try:
             if not self.login():
-                sid = self.session.cookies.get('SID')
+                sid = None
+                for cookie_name, cookie_value in self.session.cookies.items():
+                    if cookie_name.startswith("QBT_SID_"):
+                        sid = cookie_value
+                        break
+                if sid is None:
+                    sid = self.session.cookies.get('SID')
                 logger.error(f"获取Tracker失败: 登录失败，SID={sid}")
                 return []
-            sid = self.session.cookies.get('SID')
+            sid = None
+            for cookie_name, cookie_value in self.session.cookies.items():
+                if cookie_name.startswith("QBT_SID_"):
+                    sid = cookie_value
+                    break
+            if sid is None:
+                sid = self.session.cookies.get('SID')
             logger.info(f"获取Tracker时SID: {sid}")
             torrents_url = f"{self.api_url}/torrents/info"
             response = self.session.get(torrents_url, timeout=15)
@@ -167,8 +195,6 @@ class QBittorrentClient(TorrentClientBase):
             logger.error(f"获取qBittorrent Tracker列表异常: {type(e).__name__}: {str(e)}")
             logger.debug(traceback.format_exc())
             return []
-
-
 class TransmissionClient(TorrentClientBase):
     """Transmission客户端"""
     def __init__(self, host: str, port: int, username: str, password: str, use_https: bool = False, path: str = '/transmission/rpc'):
@@ -291,8 +317,6 @@ class TransmissionClient(TorrentClientBase):
         except Exception as e:
             logger.error(f"获取Tracker列表异常: {str(e)}")
             return []
-
-
 class TorrentClientManager:
     """下载器客户端管理器 - 支持多实例动态管理"""
     def __init__(self, config: Dict[str, Any]):
@@ -470,7 +494,7 @@ class TorrentClientManager:
         client_results = {}
         
         for client_id, client_info in self.clients.items():
-            # 只从启用的客户端导入Tracker
+            # 只从启用的客户端获取Tracker
             if not client_info["config"].get("enable", False):
                 continue
                 
