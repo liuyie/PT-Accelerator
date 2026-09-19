@@ -9,31 +9,21 @@ import re
 from croniter import croniter
 from urllib.parse import urlparse
 import time
-
 from app.services.cloudflare_speed_test import CloudflareSpeedTestService
 from app.services.hosts_manager import HostsManager
 from app.services.scheduler import SchedulerService
 from app.services.torrent_clients import TorrentClientManager
 from app.models import Tracker, HostsSource, CloudflareConfig, TorrentClientConfig, BatchAddDomainsRequest, User, AuthConfig
-
 # 从认证模块导入密码处理函数和依赖项
 from app.auth import get_password_hash, verify_password, get_current_user
-
 # 配置相关常量
 CONFIG_PATH = "config/config.yaml"
 DEFAULT_CLOUDFLARE_IP = "104.16.91.215"  # 全局默认Cloudflare IP
-
 # 获取日志记录器
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
-
 # 获取服务实例的依赖函数
 from app.globals import get_hosts_manager, get_cloudflare_service, get_scheduler_service, get_torrent_client_manager
-
-
-
-
 def get_config():
     """从文件获取最新配置"""
     if os.path.exists(CONFIG_PATH):
@@ -44,7 +34,6 @@ def get_config():
             logger.error(f"加载配置文件失败: {e}")
             return {}
     return {}
-
 # 获取配置（前端拉取用，每次从文件读取）
 @router.get("/config")
 async def get_config_api():
@@ -55,7 +44,6 @@ async def get_config_api():
         return config
     else:
         return {}
-
 # 更新配置（CRON表达式校验）
 @router.post("/config")
 async def update_config(
@@ -71,8 +59,6 @@ async def update_config(
         if not croniter.is_valid(cron_expr):
             raise HTTPException(status_code=400, detail="CRON表达式无效，请检查格式")
         
-
-
         # 保存配置
         with open(CONFIG_PATH, 'w') as f:
             yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
@@ -90,7 +76,6 @@ async def update_config(
     except Exception as e:
         logger.error(f"更新配置失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}")
-
 # 新增：更新认证配置的 API
 @router.post("/auth/config", dependencies=[Depends(get_current_user)])
 async def update_auth_config(
@@ -107,20 +92,16 @@ async def update_auth_config(
     
     if current_config.get("auth", {}).get("enable") and (not current_user or current_user.username == "guest"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权修改认证配置")
-
     auth_settings = current_config.get("auth", {}).copy()
     config_changed = False
-
     if enable_auth is not None and enable_auth != auth_settings.get("enable"):
         auth_settings["enable"] = enable_auth
         config_changed = True
         logger.info(f"登录认证已 {'启用' if enable_auth else '禁用'}")
-
     if username and username != auth_settings.get("username"):
         auth_settings["username"] = username
         config_changed = True
         logger.info(f"登录用户名已修改为: {username}")
-
     if new_password:
         # 验证新密码长度
         if len(new_password) < 8:
@@ -152,7 +133,6 @@ async def update_auth_config(
                 logger.info("登录密码已修改") 
                 # 密码修改成功，使当前会话失效，强制重新登录
                 request.session.pop("user", None) 
-
     if config_changed:
         current_config["auth"] = auth_settings
         try:
@@ -187,7 +167,6 @@ async def update_auth_config(
             raise HTTPException(status_code=500, detail=f"更新认证配置失败: {str(e)}")
     
     return {"message": "未检测到配置更改"}
-
 # 手动运行CloudflareSpeedTest
 @router.post("/run-cloudflare-test")
 async def run_cloudflare_test(
@@ -206,7 +185,6 @@ async def run_cloudflare_test(
     except Exception as e:
         logger.error(f"启动组合任务失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"启动组合任务失败: {str(e)}")
-
 # 获取调度器状态
 @router.get("/scheduler-status")
 async def get_scheduler_status(
@@ -217,7 +195,6 @@ async def get_scheduler_status(
         "running": scheduler_service.is_running(),
         "jobs": scheduler_service.get_jobs()
     }
-
 # 兼容旧版前端，避免404错误
 @router.get("/last-result")
 async def get_last_result_compatibility():
@@ -228,7 +205,6 @@ async def get_last_result_compatibility():
         "time": "",
         "results": []
     }
-
 # 任务状态API
 @router.get("/task-status")
 async def get_task_status(
@@ -267,7 +243,6 @@ async def get_task_status(
             "status": "done",
             "message": "获取任务状态出错，请检查日志"
         }
-
 # 获取日志
 @router.get("/logs")
 async def get_logs(lines: int = 1000):
@@ -302,15 +277,12 @@ async def get_logs(lines: int = 1000):
         except Exception as e2:
             logger.error(f"备用方式读取日志也失败: {str(e2)}")
             return {"logs": "日志读取失败，请检查日志文件权限和编码"}
-
 # ===== Cloudflare白名单管理API =====
-
 @router.get("/cloudflare-domains")
 async def get_cloudflare_domains():
     config = get_config()
     domains = config.get("cloudflare_domains", [])
     return {"cloudflare_domains": domains}
-
 @router.post("/cloudflare-domains")
 async def add_cloudflare_domain(background_tasks: BackgroundTasks, domain: str = Query(..., description="要添加的Cloudflare域名")):
     config = get_config()
@@ -329,7 +301,6 @@ async def add_cloudflare_domain(background_tasks: BackgroundTasks, domain: str =
     # 新增：白名单变更后自动异步更新hosts
     background_tasks.add_task(hosts_manager.update_hosts)
     return {"message": f"已添加 {domain} 到Cloudflare白名单", "cloudflare_domains": list(domains)}
-
 @router.delete("/cloudflare-domains")
 async def delete_cloudflare_domain(background_tasks: BackgroundTasks, domain: str = Query(..., description="要删除的Cloudflare域名")):
     config = get_config()
@@ -348,7 +319,6 @@ async def delete_cloudflare_domain(background_tasks: BackgroundTasks, domain: st
     # 新增：白名单变更后自动异步更新hosts
     background_tasks.add_task(hosts_manager.update_hosts)
     return {"message": f"已从Cloudflare白名单移除 {domain}", "cloudflare_domains": list(domains)}
-
 # 修改添加tracker接口，支持force_cloudflare参数
 @router.post("/trackers")
 async def add_tracker(
@@ -402,7 +372,6 @@ async def add_tracker(
     except Exception as e:
         logger.error(f"添加Tracker失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"添加Tracker失败: {str(e)}")
-
 @router.delete("/trackers/{domain}")
 async def delete_tracker(
     domain: str,
@@ -445,7 +414,6 @@ async def delete_tracker(
     except Exception as e:
         logger.error(f"删除Tracker失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"删除Tracker失败: {str(e)}")
-
 # 添加hosts源（URL校验）
 @router.post("/hosts-sources")
 async def add_hosts_source(
@@ -492,7 +460,6 @@ async def add_hosts_source(
     except Exception as e:
         logger.error(f"添加hosts源失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"添加hosts源失败: {str(e)}")
-
 @router.delete("/hosts-sources")
 async def delete_hosts_source(
     url: str,
@@ -527,7 +494,6 @@ async def delete_hosts_source(
     except Exception as e:
         logger.error(f"删除hosts源失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"删除hosts源失败: {str(e)}")
-
 # 手动更新hosts
 @router.post("/update-hosts")
 async def update_hosts(
@@ -542,7 +508,6 @@ async def update_hosts(
     except Exception as e:
         logger.error(f"更新hosts失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"更新hosts失败: {str(e)}")
-
 # 获取当前hosts
 @router.get("/current-hosts")
 async def get_current_hosts(
@@ -554,12 +519,9 @@ async def get_current_hosts(
     except Exception as e:
         logger.error(f"获取hosts失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取hosts失败: {str(e)}")
-
 # ===== 添加新的模型和API端点 =====
-
 class DomainList(BaseModel):
     domains: List[str]
-
 # 批量添加PT站点域名
 @router.post("/batch-add-domains")
 async def batch_add_domains(
@@ -668,7 +630,6 @@ async def batch_add_domains(
     except Exception as e:
         logger.error(f"批量添加域名失败: {str(e)}")
         return {"status": "error", "message": f"批量添加域名失败: {str(e)}"}
-
 # 运行CloudflareSpeedTest优选脚本
 @router.post("/run-cfst-script")
 async def run_cfst_script(
@@ -685,7 +646,6 @@ async def run_cfst_script(
     except Exception as e:
         logger.error(f"启动组合任务失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"启动组合任务失败: {str(e)}")
-
 # 手动更新所有Tracker为最佳IP
 @router.post("/update-all-trackers")
 async def update_all_trackers(
@@ -709,9 +669,7 @@ async def update_all_trackers(
     except Exception as e:
         logger.error(f"更新所有Tracker的IP失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"更新所有Tracker的IP失败: {str(e)}")
-
 # ===== 下载器相关API =====
-
 # 获取下载器客户端列表
 @router.get("/torrent-clients")
 async def get_torrent_clients(config: Dict[str, Any] = Depends(get_config)):
@@ -734,7 +692,6 @@ async def get_torrent_clients(config: Dict[str, Any] = Depends(get_config)):
     except Exception as e:
         logger.error(f"获取下载器客户端列表失败: {str(e)}")
         return {"success": False, "message": f"获取客户端列表失败: {str(e)}"}
-
 # 保存下载器客户端配置
 @router.post("/torrent-clients")
 async def save_torrent_clients(
@@ -792,7 +749,6 @@ async def save_torrent_clients(
     except Exception as e:
         logger.error(f"保存下载器客户端配置失败: {str(e)}")
         return {"success": False, "message": f"保存配置失败: {str(e)}"}
-
 # 测试下载器连接 - 支持通过ID或配置测试
 @router.post("/test-client-connection")
 async def test_client_connection(
@@ -819,7 +775,6 @@ async def test_client_connection(
     except Exception as e:
         logger.error(f"测试下载器连接失败: {str(e)}")
         return {"success": False, "message": f"测试连接失败: {str(e)}"}
-
 # 兼容旧版API
 @router.post("/save-clients-config")
 async def save_clients_config_route(
@@ -852,7 +807,6 @@ async def save_clients_config_route(
     except Exception as e:
         logger.error(f"保存下载器配置失败: {str(e)}")
         return {"success": False, "message": f"保存配置失败: {str(e)}"}
-
 # 删除下载器客户端
 @router.delete("/torrent-clients/{client_id}")
 async def delete_torrent_client(
@@ -886,8 +840,7 @@ async def delete_torrent_client(
     except Exception as e:
         logger.error(f"删除下载器客户端失败: {str(e)}")
         return {"success": False, "message": f"删除客户端失败: {str(e)}"}
-
-# 获取支持的客户端类型
+# 获取支持的客户端类型【已修改：qb增加api_key字段】
 @router.get("/torrent-client-types")
 async def get_torrent_client_types():
     """获取支持的下载器客户端类型"""
@@ -898,7 +851,7 @@ async def get_torrent_client_types():
                 "type": "qbittorrent",
                 "name": "qBittorrent",
                 "default_port": 8080,
-                "fields": ["host", "port", "username", "password", "use_https"]
+                "fields": ["host", "port", "username", "password", "api_key", "use_https"]
             },
             {
                 "type": "transmission",
@@ -908,7 +861,6 @@ async def get_torrent_client_types():
             }
         ]
     }
-
 # 从下载器导入Tracker
 @router.post("/import-trackers-from-clients")
 async def import_trackers_from_clients_route(
@@ -1023,7 +975,6 @@ async def import_trackers_from_clients_route(
     except Exception as e:
         logger.error(f"从下载器客户端导入Tracker失败: {str(e)}", exc_info=True)
         return {"status": "error", "message": f"导入过程中发生错误: {str(e)}"}
-
 @router.post("/clear-and-update-hosts")
 async def clear_and_update_hosts(
     background_tasks: BackgroundTasks,
@@ -1041,7 +992,6 @@ async def clear_and_update_hosts(
     except Exception as e:
         logger.error(f"清空并更新hosts失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"清空并更新hosts失败: {str(e)}")
-
 @router.post("/clear-all-trackers")
 async def clear_all_trackers(
     background_tasks: BackgroundTasks,
@@ -1064,4 +1014,3 @@ async def clear_all_trackers(
     except Exception as e:
         logger.error(f"清空所有tracker失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"清空所有tracker失败: {str(e)}")
-
