@@ -110,28 +110,32 @@ class QBittorrentClient(TorrentClientBase):
         """
         登录/验证qBittorrent。
 
-        API Key模式：
-            GET /api/v2/app/version
-            Authorization: Bearer qbt_xxx
+        认证优先级：
+        1. qBittorrent 5.2+ API Key（Bearer）
+        2. API Key 失败后自动回退到用户名 + 密码 + SID Cookie
 
-        用户密码模式：
-            POST /api/v2/auth/login
-            获取SID Cookie
-
-        同时兼容HTTP 204 + SID的情况。
+        用户名、密码和 API Key 可以同时配置。
+        API Key 成功时保留 Bearer Header；如果 API Key 失效，
+        会自动移除 Bearer Header，再使用用户名/密码建立 SID 会话。
         """
 
         try:
+            # 每次重新认证前清理旧 SID，避免残留会话影响结果。
+            self.session.cookies.pop("SID", None)
 
             # ============================================================
-            # API Key认证
+            # API Key认证（优先）
             # ============================================================
 
             if self.api_key:
-
                 logger.info(
-                    "正在使用qBittorrent API Key进行认证"
+                    "正在使用qBittorrent API Key进行认证（用户名/密码仍保留作为备用认证）"
                 )
+
+                # 确保 Bearer Header 使用当前配置的 API Key。
+                self.session.headers.update({
+                    "Authorization": f"Bearer {self.api_key}"
+                })
 
                 version_url = f"{self.api_url}/app/version"
 
@@ -151,24 +155,36 @@ class QBittorrentClient(TorrentClientBase):
                 )
 
                 if response.status_code == 200:
-
                     logger.info(
-                        "qBittorrent API Key认证成功"
+                        "qBittorrent API Key认证成功，后续请求使用API Key"
                     )
-
                     return True
 
-                logger.error(
+                logger.warning(
                     f"qBittorrent API Key认证失败: "
                     f"状态码={response.status_code}, "
-                    f"响应='{response.text}'"
+                    f"响应='{response.text}'；"
+                    "将自动回退到用户名/密码认证"
                 )
 
-                return False
+                # API Key 无效时必须移除 Bearer Header，
+                # 否则后面的用户名/密码登录请求可能仍携带失效的 Bearer。
+                self.session.headers.pop("Authorization", None)
 
             # ============================================================
-            # 用户名 + 密码认证
+            # 用户名 + 密码 + SID认证（API Key失败时自动回退）
             # ============================================================
+
+            if not self.username or not self.password:
+                logger.error(
+                    "qBittorrent API Key不可用，且未配置完整的用户名/密码，"
+                    "无法进行备用认证"
+                )
+                return False
+
+            logger.info(
+                "正在使用qBittorrent用户名 + 密码进行备用认证"
+            )
 
             login_url = f"{self.api_url}/auth/login"
 
@@ -193,25 +209,20 @@ class QBittorrentClient(TorrentClientBase):
                 f"登录响应: "
                 f"状态码={response.status_code}, "
                 f"内容='{response.text}', "
-                f"SID={sid}"
+                f"SID={'已获取' if sid else 'None'}"
             )
 
             # ============================================================
-            # qBittorrent 5.2+ / 部分版本：
             # HTTP 204 + SID
             # ============================================================
 
             if response.status_code == 204 and sid:
-
                 logger.info(
-                    f"qBittorrent登录成功 "
-                    f"(HTTP 204 + SID={sid})"
+                    "qBittorrent用户名/密码登录成功（HTTP 204 + SID）"
                 )
-
                 return True
 
             # ============================================================
-            # 传统qBittorrent：
             # HTTP 200 + OK + SID
             # ============================================================
 
@@ -221,67 +232,49 @@ class QBittorrentClient(TorrentClientBase):
                 and response.text.lower().startswith("ok")
                 and sid
             ):
-
                 logger.info(
-                    f"qBittorrent登录成功 "
-                    f"(HTTP 200 + SID={sid})"
+                    "qBittorrent用户名/密码登录成功（HTTP 200 + OK + SID）"
                 )
-
                 return True
 
             # ============================================================
-            # 某些版本可能只返回200 + SID
+            # HTTP 200 + SID
             # ============================================================
 
             if response.status_code == 200 and sid:
-
                 logger.info(
-                    f"qBittorrent登录成功 "
-                    f"(HTTP 200 + SID={sid})"
+                    "qBittorrent用户名/密码登录成功（HTTP 200 + SID）"
                 )
-
                 return True
 
-            # ============================================================
-            # 登录失败
-            # ============================================================
-
             logger.error(
-                f"qBittorrent登录失败: "
+                f"qBittorrent用户名/密码登录失败: "
                 f"状态码={response.status_code}, "
                 f"响应='{response.text}', "
-                f"SID={sid}"
+                f"SID={'已获取' if sid else 'None'}"
             )
 
             return False
 
         except requests.exceptions.Timeout:
-
             logger.error(
-                f"qBittorrent登录超时: "
-                f"{self.host}:{self.port}"
+                f"qBittorrent登录超时: {self.host}:{self.port}"
             )
-
             return False
 
         except requests.exceptions.ConnectionError as e:
-
             logger.error(
                 f"qBittorrent连接错误: {str(e)}"
             )
-
             return False
 
         except Exception as e:
-
             error_msg = (
                 f"qBittorrent登录异常: "
                 f"{type(e).__name__}: {str(e)}"
             )
-
             logger.error(error_msg)
             logger.debug(traceback.format_exc())
-
             return False
 
     def test_connection(self) -> Dict[str, Any]:
@@ -308,8 +301,8 @@ class QBittorrentClient(TorrentClientBase):
 
                 if self.api_key:
                     message = (
-                        "qBittorrent API Key认证失败，"
-                        "请检查API Key、主机地址和端口"
+                        "qBittorrent API Key及用户名/密码认证均失败，"
+                        "请检查API Key、主机地址、端口、用户名和密码"
                     )
                 else:
                     message = (
@@ -328,9 +321,14 @@ class QBittorrentClient(TorrentClientBase):
 
             sid = self.session.cookies.get("SID")
 
-            logger.info(
-                f"qBittorrent认证成功，SID={sid}"
-            )
+            if self.api_key and self.session.headers.get("Authorization"):
+                logger.info(
+                    "qBittorrent认证成功，当前使用API Key认证"
+                )
+            else:
+                logger.info(
+                    f"qBittorrent认证成功，SID={'已获取' if sid else 'None'}"
+                )
 
             # ============================================================
             # 获取qBittorrent版本
