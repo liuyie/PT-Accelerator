@@ -1,11 +1,9 @@
 /**
  * 下载器管理相关功能 - 支持多实例动态管理
  */
-
 // 全局变量
 let currentClients = [];
 let supportedClientTypes = [];
-
 // 初始化下载器配置界面
 function initTorrentClientsUI() {
     console.log('初始化下载器客户端管理界面');
@@ -19,7 +17,6 @@ function initTorrentClientsUI() {
     // 绑定按钮事件
     bindTorrentClientEvents();
 }
-
 // 加载支持的客户端类型
 function loadSupportedClientTypes() {
     $.ajax({
@@ -38,7 +35,6 @@ function loadSupportedClientTypes() {
         }
     });
 }
-
 // 加载下载器客户端配置
 function loadTorrentClients() {
     console.log('加载下载器客户端配置');
@@ -65,7 +61,6 @@ function loadTorrentClients() {
         }
     });
 }
-
 // 渲染客户端列表
 function renderTorrentClients() {
     const container = $("#torrent-clients-container");
@@ -107,11 +102,19 @@ function renderTorrentClients() {
         container.append(emptyHtml);
     }
 }
-
 // 创建客户端卡片
 function createClientCard(client, index) {
     const clientType = supportedClientTypes.find(type => type.type === client.type) || {};
     const typeName = clientType.name || client.type;
+    // API Key脱敏展示
+    let apiKeyDisplay = "(未设置)";
+    if(client.api_key){
+        if(client.api_key.length > 8){
+            apiKeyDisplay = client.api_key.substring(0,4)+"****"+client.api_key.slice(-4);
+        }else{
+            apiKeyDisplay = "****";
+        }
+    }
     
     return `
         <div class="card mb-3" data-client-id="${client.id}">
@@ -143,6 +146,12 @@ function createClientCard(client, index) {
                         <small class="text-muted">用户名:</small><br>
                         <span>${client.username || '(未设置)'}</span>
                     </div>
+                    ${client.type === 'qbittorrent' ? `
+                    <div class="col-md-6 mt-2">
+                        <small class="text-muted">API Key:</small><br>
+                        <span>${apiKeyDisplay}</span>
+                    </div>
+                    ` : ''}
                     ${client.type === 'transmission' ? `
                     <div class="col-md-6 mt-2">
                         <small class="text-muted">RPC路径:</small><br>
@@ -154,7 +163,6 @@ function createClientCard(client, index) {
         </div>
     `;
 }
-
 // 绑定事件
 function bindTorrentClientEvents() {
     // 先解绑所有相关事件，避免重复绑定
@@ -177,7 +185,6 @@ function bindTorrentClientEvents() {
         saveTorrentClients();
     });
 }
-
 // 显示客户端配置模态框
 function showClientModal(clientId = null) {
     const isEdit = clientId !== null;
@@ -240,6 +247,14 @@ function showClientModal(clientId = null) {
                                         <label for="client-password">密码</label>
                                     </div>
                                 </div>
+                                <!-- qBittorrent API Key 输入框 -->
+                                <div class="col-md-6" id="qb-api-key-group" style="display: none;">
+                                    <div class="form-floating mb-3">
+                                        <input type="text" class="form-control" id="client-apikey" placeholder="API Key"
+                                               value="${client ? (client.api_key || '') : ''}">
+                                        <label for="client-apikey">API Key（qB5.2+，优先API认证）</label>
+                                    </div>
+                                </div>
                                 <div class="col-md-6" id="transmission-path-group" style="display: none;">
                                     <div class="form-floating mb-3">
                                         <input type="text" class="form-control" id="client-path" placeholder="RPC路径"
@@ -291,7 +306,6 @@ function showClientModal(clientId = null) {
     // 根据类型显示/隐藏特定字段
     updateClientFormFields();
 }
-
 // 绑定客户端模态框事件
 function bindClientModalEvents(isEdit, clientId) {
     // 类型变化时更新表单字段
@@ -307,7 +321,6 @@ function bindClientModalEvents(isEdit, clientId) {
         saveClientFromModal(isEdit, clientId);
     });
 }
-
 // 更新客户端表单字段
 function updateClientFormFields() {
     const selectedType = $('#client-type').val();
@@ -325,9 +338,14 @@ function updateClientFormFields() {
         } else {
             $('#transmission-path-group').hide();
         }
+        // 仅qbittorrent展示API Key输入框
+        if(selectedType === 'qbittorrent'){
+            $('#qb-api-key-group').show();
+        }else{
+            $('#qb-api-key-group').hide();
+        }
     }
 }
-
 // 在模态框中测试连接
 function testClientConnectionInModal() {
     const clientConfig = getClientConfigFromModal();
@@ -367,7 +385,6 @@ function testClientConnectionInModal() {
         }
     });
 }
-
 // 从模态框获取客户端配置
 function getClientConfigFromModal() {
     return {
@@ -377,12 +394,12 @@ function getClientConfigFromModal() {
         port: parseInt($('#client-port').val()) || 0,
         username: $('#client-username').val().trim(),
         password: $('#client-password').val(),
+        api_key: $('#client-apikey').val().trim(),
         use_https: $('#client-https').prop('checked'),
         path: $('#client-path').val().trim() || '/transmission/rpc',
         enable: $('#client-enable').prop('checked')
     };
 }
-
 // 验证客户端配置
 function validateClientConfig(config) {
     if (!config.name) {
@@ -407,7 +424,6 @@ function validateClientConfig(config) {
     
     return true;
 }
-
 // 从模态框保存客户端
 function saveClientFromModal(isEdit, clientId) {
     const clientConfig = getClientConfigFromModal();
@@ -435,14 +451,12 @@ function saveClientFromModal(isEdit, clientId) {
     // 关闭模态框
     $('#clientModal').modal('hide');
 }
-
 // 生成客户端ID
 function generateClientId(type) {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 1000);
     return `${type}_${timestamp}_${random}`;
 }
-
 // 保存所有下载器客户端配置
 function saveTorrentClients() {
     console.log('保存下载器客户端配置:', currentClients);
@@ -477,7 +491,6 @@ function saveTorrentClients() {
         }
     });
 }
-
 // 测试客户端连接
 function testClientConnection(clientId) {
     const client = currentClients.find(c => c.id === clientId);
@@ -522,12 +535,10 @@ function testClientConnection(clientId) {
         }
     });
 }
-
 // 编辑客户端
 function editClient(clientId) {
     showClientModal(clientId);
 }
-
 // 删除客户端
 function deleteClient(clientId) {
     const client = currentClients.find(c => c.id === clientId);
@@ -558,7 +569,6 @@ function deleteClient(clientId) {
         });
     }
 }
-
 // 从下载器导入Tracker
 function importTrackersFromClients() {
     // 检查是否有启用的客户端
@@ -610,7 +620,6 @@ function importTrackersFromClients() {
         }
     });
 }
-
 // 新增 DOMContentLoaded 事件监听器确保只初始化一次
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Torrent clients UI DOM fully loaded, initializing.');
